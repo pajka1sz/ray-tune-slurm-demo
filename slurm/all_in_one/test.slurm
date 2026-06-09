@@ -61,5 +61,7 @@ for ((i = 1; i <= worker_num; i++)); do
 done
 
 # ===== Call your code below =====
-export WANDB_MODE=offline
-python3 ../../src/rtstest/dothetune.py --tune --gpu
+# export WANDB_MODE=offline
+# python3 ../../src/rtstest/dothetune.py --tune --gpu
+
+python3 ../../src/rtstest/train.py

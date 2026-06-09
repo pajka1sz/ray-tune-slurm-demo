@@ -7,6 +7,9 @@ export redis_password
 echo "Redis password ${redis_password}"
 echo "IP Head: $ip_head"
 
-export WANDB_MODE=offline
+# export WANDB_MODE=offline
+# echo $(which python3)
+# python3 ../../src/rtstest/dothetune.py --tune --gpu
+
 echo $(which python3)
-python3 ../../src/rtstest/dothetune.py --tune --gpu
+python3 ../../src/rtstest/train.py
