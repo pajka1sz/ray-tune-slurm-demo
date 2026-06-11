@@ -5,42 +5,48 @@ import torch.optim as optim
 import torchvision
 import torchvision.transforms as transforms
 from torchvision.models import resnet18
+from filelock import FileLock
 
+import ray
 from ray import tune, train
 from ray.tune.search.optuna import OptunaSearch
-from ray.air.integrations.wandb import WandbLoggerCallback
+
+# 1. ZMIANA: Importujemy setup_wandb zamiast starego callbacku
+from ray.air.integrations.wandb import setup_wandb
 
 def train_cifar(config):
-    # 1. Data preparation (CIFAR-10 will be downloaded automatically)
+    # 2. ZMIANA: Uruchamiamy wandb na początku procesu treningowego
+    # Pobierze klucz ze zmiennej środowiskowej ustalonej w Slurmie (lub użyj stringa obok)
+    wandb_run = setup_wandb(
+        config,
+        project="ray-tune-slurm-cifar",
+        api_key=os.environ.get("WANDB_API_KEY", "YOUR_API_KEY") 
+    )
+
+    # 1. Data preparation
     transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
-    
-    trainset = torchvision.datasets.CIFAR10(
-        root='./data',
-        train=True,
-        download=True,
-        transform=transform
-    )
+
+    scratch_dir = os.environ.get("SCRATCH", "./")
+    data_dir = os.path.join(scratch_dir, "cifar_data")
+    lock_path = os.path.join(scratch_dir, "cifar.lock")
+
+    # Blokada: Tylko JEDEN proces na raz może pobierać i rozpakowywać dane
+    with FileLock(lock_path):
+        trainset = torchvision.datasets.CIFAR10(
+            root=data_dir, train=True, download=True, transform=transform
+        )
+        testset = torchvision.datasets.CIFAR10(
+            root=data_dir, train=False, download=True, transform=transform
+        )
+        
     trainloader = torch.utils.data.DataLoader(
-        trainset,
-        batch_size=config["batch_size"],
-        shuffle=True,
-        num_workers=2
-    )
-    
-    testset = torchvision.datasets.CIFAR10(
-        root='./data',
-        train=False,
-        download=True,
-        transform=transform
+        trainset, batch_size=config["batch_size"], shuffle=True, num_workers=2
     )
     testloader = torch.utils.data.DataLoader(
-        testset,
-        batch_size=config["batch_size"],
-        shuffle=False,
-        num_workers=2
+        testset, batch_size=config["batch_size"], shuffle=False, num_workers=2
     )
 
     # 2. Load the model (ResNet18)
@@ -81,13 +87,23 @@ def train_cifar(config):
                 total += labels.size(0)
                 correct += predicted.eq(labels).sum().item()
         
-        # 5. Report metrics to Ray Tune (and automatically to WandB)
-        train.report({
+        # 5. Report metrics
+        metrics = {
             "loss": val_loss / len(testloader),
             "accuracy": correct / total
-        })
+        }
+        
+        # Zgłaszamy metryki do Ray Tune i bezpośrednio logujemy je w WandB
+        tune.report(**metrics) 
+        wandb_run.log(metrics)
 
 if __name__ == "__main__":
+    ip_head = os.environ.get("ip_head")
+    if ip_head:
+        ray.init(address=ip_head)
+    else:
+        ray.init() 
+
     # A. Define the Optuna hyperparameter search space
     search_space = {
         "lr": tune.loguniform(1e-4, 1e-1),
@@ -95,30 +111,26 @@ if __name__ == "__main__":
         "momentum": tune.uniform(0.8, 0.99)
     }
 
-    # B. Configure logging to Weights & Biases
-    wandb_callback = WandbLoggerCallback(
-        project="ray-tune-slurm-cifar",
-        # Make sure to set the WANDB_API_KEY environment variable before running!
-        api_key="YOUR_WANDB_API_KEY"
-    )
+    scratch_dir = os.environ.get("SCRATCH", "./")
+    ray_results_dir = os.path.join(scratch_dir, "ray_results")
 
     # C. Launch Ray Tune with Optuna search
     tuner = tune.Tuner(
-        # Resources allocated to a SINGLE trial:
-        # 2 CPU cores and half of a GPU
         tune.with_resources(
             train_cifar,
-            resources={"cpu": 2, "gpu": 0.5}
+            resources={"cpu": 2, "gpu": 0} # 2 CPU per worker
         ),
         tune_config=tune.TuneConfig(
             metric="accuracy",
             mode="max",
             search_alg=OptunaSearch(),
-            num_samples=10,  # Run 10 experiments with different hyperparameters
+            num_samples=10,
         ),
         param_space=search_space,
-        run_config=train.RunConfig(
-            callbacks=[wandb_callback]
+        # 4. ZMIANA: Pusty run_config, bo nie ładujemy już w nim WandbLoggerCallback
+        run_config=tune.RunConfig(
+            verbose=1,
+            storage_path=ray_results_dir
         )
     )
     
