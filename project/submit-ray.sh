@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=ray_optuna_cifar_cpu
-#SBATCH --nodes=2                   # Liczba węzłów (1 head + 1 worker)
-#SBATCH --tasks-per-node=1          # Jeden główny proces Ray per węzeł
-#SBATCH --cpus-per-task=8           # Liczba rdzeni na węzeł
-#SBATCH --time=02:00:00             # Czas trwania zadania
-#SBATCH --partition=plgrid          # Standardowa partycja CPU na Aresie
-#SBATCH --output=ray_job_cpu_%j.log # Plik z logami
+#SBATCH --nodes=2             # 1 head + 1 worker
+#SBATCH --tasks-per-node=1
+#SBATCH --cpus-per-task=8
+#SBATCH --time=02:00:00
+#SBATCH --partition=plgrid
+#SBATCH --output=ray_job_cpu_%j.log
 
 # ==========================================
 # 1. Konfiguracja środowiska
@@ -24,10 +24,9 @@ head_node_ip=$(srun --nodes=1 --ntasks=1 -w "$head_node" hostname --ip-address)
 
 port=6379
 export ip_head=$head_node_ip:$port
-echo "IP głównego węzła (Head Node): $ip_head"
+echo "Head Node: $ip_head"
 
 echo "Uruchamianie Ray Head na węźle: $head_node"
-# DODANO TUTAJ: --temp-dir
 srun --nodes=1 --ntasks=1 -w "$head_node" \
     ray start --head --node-ip-address="$head_node_ip" --port=$port \
     --temp-dir="/tmp/$USER/ray" \
@@ -44,7 +43,6 @@ if [ $worker_num -gt 0 ]; then
     for ((i = 1; i <= worker_num; i++)); do
         node_i=${nodes_array[$i]}
         echo "Uruchamianie Worker $i na węźle $node_i"
-        # DODANO TUTAJ: --temp-dir
         srun --nodes=1 --ntasks=1 -w "$node_i" \
             ray start --address "$ip_head" \
             --temp-dir="/tmp/$USER/ray" \
