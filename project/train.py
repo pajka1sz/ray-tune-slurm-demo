@@ -11,12 +11,10 @@ import ray
 from ray import tune, train
 from ray.tune.search.optuna import OptunaSearch
 
-# 1. ZMIANA: Importujemy setup_wandb zamiast starego callbacku
+# 1. WandB import
 from ray.air.integrations.wandb import setup_wandb
 
 def train_cifar(config):
-    # 2. ZMIANA: Uruchamiamy wandb na początku procesu treningowego
-    # Pobierze klucz ze zmiennej środowiskowej ustalonej w Slurmie (lub użyj stringa obok)
     wandb_run = setup_wandb(
         config,
         project="ray-tune-slurm-cifar",
@@ -33,7 +31,7 @@ def train_cifar(config):
     data_dir = os.path.join(scratch_dir, "cifar_data")
     lock_path = os.path.join(scratch_dir, "cifar.lock")
 
-    # Blokada: Tylko JEDEN proces na raz może pobierać i rozpakowywać dane
+    # Block: data can be downloaded and unpacked by only one process at the time
     with FileLock(lock_path):
         trainset = torchvision.datasets.CIFAR10(
             root=data_dir, train=True, download=True, transform=transform
@@ -93,7 +91,7 @@ def train_cifar(config):
             "accuracy": correct / total
         }
         
-        # Zgłaszamy metryki do Ray Tune i bezpośrednio logujemy je w WandB
+        # Submit metrics to Ray Tune i and log them in WandB
         tune.report(**metrics) 
         wandb_run.log(metrics)
 
@@ -127,7 +125,6 @@ if __name__ == "__main__":
             num_samples=10,
         ),
         param_space=search_space,
-        # 4. ZMIANA: Pusty run_config, bo nie ładujemy już w nim WandbLoggerCallback
         run_config=tune.RunConfig(
             verbose=1,
             storage_path=ray_results_dir
